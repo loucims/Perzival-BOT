@@ -36,6 +36,7 @@ colorama.init(convert=True)
 
 
 openai.api_key = os.getenv('OPENAI_API_KEY')
+model = os.getenv('OPENAI_MODEL')
 
 def remove_first_and_last_line(multiline_string):
     lines = multiline_string.strip().split('\n')
@@ -90,7 +91,7 @@ def main():
 
             print("\n" + colorama.Fore.BLUE + chatbot_name + ": " + colorama.Style.RESET_ALL, end="")
             response = openai.ChatCompletion.create(
-                model='gpt-4',
+                model='model',
                 messages=messages,
                 temperature=0,
                 stream=True  # again, we set stream=True

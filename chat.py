@@ -91,7 +91,7 @@ def main():
 
             print("\n" + colorama.Fore.BLUE + chatbot_name + ": " + colorama.Style.RESET_ALL, end="")
             response = openai.ChatCompletion.create(
-                model='model',
+                model=model,
                 messages=messages,
                 temperature=0,
                 stream=True  # again, we set stream=True

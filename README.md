@@ -1,4 +1,4 @@
-# Perzival - The Sassiest Assistant
+# Perzival - The Terminal Assistant
 
 ## Description
 Perzival is an AI-powered assistant designed to help you with various tasks.

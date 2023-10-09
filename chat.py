@@ -21,6 +21,8 @@ import sounddevice as sd
 import numpy as np
 from pydub import AudioSegment
 from io import BytesIO
+import keyboard
+import time
 import threading
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, module='pydub')
@@ -113,62 +115,67 @@ def print_full_message_iteratively(response):
 
     return ''.join([m.get('content', '') for m in collected_messages])
 
-myrecording = None
 recording = False
-def do_nothing():
-    return
 
 def record_audio():
-    global myrecording
     global recording
+    global buffer
 
     print("Recording...")
-    myrecording = sd.rec(frames=int(60 * 44100), samplerate=44100, channels=2)
-    sd.wait()
+    buffer = np.empty((0,2), dtype='int16')  # Create an empty buffer
+    with sd.InputStream(samplerate=44100, channels=2, device=1, dtype='int16') as stream:
+        while recording:  # Check the value of recording here
+            data, overflowed = stream.read(stream.read_available)
+            buffer = np.append(buffer, data, axis=0)
     print("Recording complete!")
 
-def enter_audio_recording_mode():
-    global recording  # Add this line
-    global myrecording  # Add this line
+def convert_recording_to_audio_bytes(buffer):
+    
+    # Convert the NumPy array to audio
+    audio = AudioSegment(buffer.tobytes(), frame_rate=44100, sample_width=buffer.dtype.itemsize, channels=2)
 
-    threading.Thread(target=record_audio).start()
+    # Save it to a BytesIO object
+    mp3_fp = BytesIO()
+    mp3_fp.name = "temporary.mp3"
+    audio.export(mp3_fp, format="mp3")
+
+    # Rewind the BytesIO object
+    mp3_fp.seek(0)
+    return mp3_fp
+
+def enter_audio_recording_mode():
+    global recording
+    global buffer
+
+
+    text = FormattedText([
+        ('#808080', 'Hold R to record... ')
+    ])
+
+
+    print_formatted_text(text)
+
 
     while True:
-        text = FormattedText([
-            ('#808080', 'Y/N: ')
-        ])
-
-        text = get_multiline_input(text)
-
-        if text.lower() == "y":
+        if keyboard.is_pressed('r') and not recording: 
+            recording = True  # Start the recording
+            threading.Thread(target=record_audio).start()
+        elif not keyboard.is_pressed('r') and recording:
             # Stop the recording
             recording = False
             sd.stop()
 
-            # Convert the NumPy array to audio
-            audio = AudioSegment(myrecording.tobytes(), frame_rate=44100, sample_width=myrecording.dtype.itemsize, channels=2)
-
-            # Save it to a BytesIO object
-            wav_fp = BytesIO()
-            wav_fp.name = "temporary.mp3"
-            audio.export(wav_fp, format="mp3")
-
-            # Rewind the BytesIO object
-            wav_fp.seek(0)
+            mp3_fp = convert_recording_to_audio_bytes(buffer)
 
             # Pass the BytesIO object directly to OpenAI's API
-            transcript = openai.Audio.transcribe("whisper-1", wav_fp)
+            transcript = openai.Audio.transcribe("whisper-1", mp3_fp, language="en")
 
             # Print the transcript
             print("\n" + colorama.Fore.RED + 'You' + ": " + colorama.Style.RESET_ALL, end="")
             print(transcript.text)
-
             return transcript.text
-        elif text.lower() == "n":
-            # Stop the recording
-            recording = False
-            sd.stop()
-            return "just gimme a moment, I'm thinking. . ."
+        
+        time.sleep(0.1)  # add a small delay
 
 
 
@@ -182,7 +189,6 @@ def main():
 
 
         messages.append({"role": "system", "content": system_msg})
-
         print("Starting chat. . .")
         while input != "quit()": 
 
@@ -190,9 +196,17 @@ def main():
                 ('#ff0066', 'You: ')
             ])
 
-            text = get_multiline_input(text)
+            state = sys.argv[1]
+            match state:
+                case "voice":
+                    text = enter_audio_recording_mode()
+                case _:
+                    text = get_multiline_input(text)
+
+
             if text == "voice":
                 text = enter_audio_recording_mode()
+                
 
             messages.append({"role": "user", "content": text})
 

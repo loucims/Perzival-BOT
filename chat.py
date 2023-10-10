@@ -1,3 +1,4 @@
+# ai stuff
 import openai
 
 # syntax highlighting
@@ -9,12 +10,16 @@ import colorama
 from prompt_toolkit import prompt
 from prompt_toolkit import print_formatted_text
 from prompt_toolkit.formatted_text import FormattedText
+# init colors
+colorama.init(convert=True)
 
 #dotenv stuff
 import sys
 import os
 from dotenv import load_dotenv
 load_dotenv()
+openai.api_key = os.getenv('OPENAI_API_KEY')
+model = os.getenv('OPENAI_MODEL')
 
 # audio stuff
 import sounddevice as sd
@@ -27,12 +32,6 @@ import threading
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, module='pydub')
 
-# init coloros
-colorama.init(convert=True)
-
-
-openai.api_key = os.getenv('OPENAI_API_KEY')
-model = os.getenv('OPENAI_MODEL')
 
 def remove_first_and_last_line(multiline_string):
     lines = multiline_string.strip().split('\n')
@@ -115,68 +114,58 @@ def print_full_message_iteratively(response):
 
     return ''.join([m.get('content', '') for m in collected_messages])
 
-recording = False
+class AudioRecorder:
+    def __init__(self):
+        self.isRecording = False
+        self.buffer = np.empty((0,2), dtype='int16')
 
-def record_audio():
-    global recording
-    global buffer
+    def record_audio(self):
+        print("Recording...")
+        with sd.InputStream(samplerate=44100, channels=2, device=1, dtype='int16') as stream:
+            while self.isRecording:
+                data, overflowed = stream.read(stream.read_available)
+                self.buffer = np.append(self.buffer, data, axis=0)
+        print("Recording complete!")
 
-    print("Recording...")
-    buffer = np.empty((0,2), dtype='int16')  # Create an empty buffer
-    with sd.InputStream(samplerate=44100, channels=2, device=1, dtype='int16') as stream:
-        while recording:  # Check the value of recording here
-            data, overflowed = stream.read(stream.read_available)
-            buffer = np.append(buffer, data, axis=0)
-    print("Recording complete!")
-
-def convert_recording_to_audio_bytes(buffer):
+    def convert_recording_to_audio_bytes(self):
     
-    # Convert the NumPy array to audio
-    audio = AudioSegment(buffer.tobytes(), frame_rate=44100, sample_width=buffer.dtype.itemsize, channels=2)
+        # Convert the NumPy array to audio
+        audio = AudioSegment(self.buffer.tobytes(), frame_rate=44100, sample_width=self.buffer.dtype.itemsize, channels=2)
 
-    # Save it to a BytesIO object
-    mp3_fp = BytesIO()
-    mp3_fp.name = "temporary.mp3"
-    audio.export(mp3_fp, format="mp3")
+        # Save it to a BytesIO object
+        mp3_fp = BytesIO()
+        mp3_fp.name = "temporary.mp3"
+        audio.export(mp3_fp, format="mp3")
 
-    # Rewind the BytesIO object
-    mp3_fp.seek(0)
-    return mp3_fp
+        # Rewind the BytesIO object
+        mp3_fp.seek(0)
+        return mp3_fp
 
-def enter_audio_recording_mode():
-    global recording
-    global buffer
+    def enter_audio_recording_mode(self):
+        text = FormattedText([
+            ('#808080', 'Hold R to record... ')
+        ])
+        print_formatted_text(text)
 
+        while True:
+            if keyboard.is_pressed('r') and not self.isRecording:
+                self.isRecording = True
 
-    text = FormattedText([
-        ('#808080', 'Hold R to record... ')
-    ])
+                #Start recording in another thread
+                threading.Thread(target=self.record_audio).start()
+            elif not keyboard.is_pressed('r') and self.isRecording:
+                self.isRecording = False
+                sd.stop()
 
+                mp3_fp = self.convert_recording_to_audio_bytes()
 
-    print_formatted_text(text)
+                transcript = openai.Audio.transcribe("whisper-1", mp3_fp, language="en")
 
+                print("\n" + colorama.Fore.RED + 'You' + ": " + colorama.Style.RESET_ALL, end="")
+                print(transcript.text)
+                return transcript.text
 
-    while True:
-        if keyboard.is_pressed('r') and not recording: 
-            recording = True  # Start the recording
-            threading.Thread(target=record_audio).start()
-        elif not keyboard.is_pressed('r') and recording:
-            # Stop the recording
-            recording = False
-            sd.stop()
-
-            mp3_fp = convert_recording_to_audio_bytes(buffer)
-
-            # Pass the BytesIO object directly to OpenAI's API
-            transcript = openai.Audio.transcribe("whisper-1", mp3_fp, language="en")
-
-            # Print the transcript
-            print("\n" + colorama.Fore.RED + 'You' + ": " + colorama.Style.RESET_ALL, end="")
-            print(transcript.text)
-            return transcript.text
-        
-        time.sleep(0.1)  # add a small delay
-
+            time.sleep(0.1)
 
 
 def main(): 
@@ -199,13 +188,14 @@ def main():
             state = sys.argv[1]
             match state:
                 case "voice":
-                    text = enter_audio_recording_mode()
+                    recorder = AudioRecorder()
+                    text = recorder.enter_audio_recording_mode()
                 case _:
                     text = get_multiline_input(text)
 
 
             if text == "voice":
-                text = enter_audio_recording_mode()
+                text = AudioRecorder.enter_audio_recording_mode()
                 
 
             messages.append({"role": "user", "content": text})
